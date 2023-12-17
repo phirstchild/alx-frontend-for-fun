@@ -1,201 +1,124 @@
 #!/usr/bin/python3
-"""
-Module for storing the markdown to html script.
-"""
-from sys import argv, stderr
-from os.path import exists
-from hashlib import md5
+import sys
+import os
 import re
-from time import sleep
+import hashlib
 
+def convert_markdown_to_html(markdown_file, output_file):
+    # Check if the number of arguments is correct
+    if len(sys.argv) != 3:
+        sys.stderr.write("Usage: ./markdown2html.py <input_file> <output_file>\n")
+        sys.exit(1)
 
-def h(line):
-    """
-    Creates a heading html element
-    <h1..6>...</h1..6}>
-    """
-    line = line.replace("\n", "")
+    # Check if the Markdown file exists
+    if not os.path.isfile(markdown_file):
+        sys.stderr.write(f"Missing {markdown_file}\n")
+        sys.exit(1)
 
-    line = line.strip()
-    parse_space = line.split(" ")
+    # Read the Markdown file
+    with open(markdown_file, 'r') as f:
+        markdown_content = f.read()
 
-    level = parse_space[0].count("#")
+    # Markdown to HTML conversion logic
+    html_content = parse_markdown_to_html(markdown_content)
 
-    if (level > 6):
-        return(line)
+    # Write HTML content to the output file
+    with open(output_file, 'w') as output:
+        output.write(html_content)
 
-    # Removes closing symbols at end of line.
-    if len(parse_space[-1]) == parse_space[-1].count("#"):
-        parse_space = parse_space[0:-1]
+    sys.exit(0)
 
-    # Concatenates the content string.
-    content = ""
-    for word in parse_space[1:]:
-        content += word + " "
-    content = content[0:-1]
+def parse_markdown_to_html(markdown_content):
+    # Bold parsing
+    markdown_content = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', markdown_content)
 
-    return("<h{}>{}</h{}>".format(level, content, level))
+    # Emphasized parsing
+    markdown_content = re.sub(r'__(.*?)__', r'<em>\1</em>', markdown_content)
 
+    # MD5 hashing parsing
+    markdown_content = re.sub(r'\[\[(.*?)\]\]', lambda match: hashlib.md5(match.group(1).encode()).hexdigest(), markdown_content)
 
-def li(line, flags):
-    """
-    Creates a list item html element.
-    <li>...</li>
-    """
-    line = line.replace("\n", "")
-    line = line.strip()
-    parse_space = line.split(" ")
+    # Remove all occurrences of 'c' parsing
+    markdown_content = re.sub(r'\(\((.*?)\)\)', lambda match: match.group(1).replace('c', ''), markdown_content, flags=re.IGNORECASE)
 
-    # Concatenates the content string.
-    content = ""
-    for word in parse_space[1:]:
-        content += word + " "
-    content = content[0:-1]
-    content = "<li>{}</li>\n".format(content)
+    # Split the content by lines
+    lines = markdown_content.split('\n')
 
-    # if "-s" in flags:
-    #     content = " " + content
+    # Initialize variables
+    html_output = ''
+    in_unordered_list = False
+    in_ordered_list = False
+    in_paragraph = False
 
-    return(content)
+    # Parse Markdown to HTML
+    for line in lines:
+        if line.startswith('* '):
+            # Start of an unordered list
+            if not in_unordered_list:
+                if in_ordered_list:
+                    html_output += '</ol>\n'
+                    in_ordered_list = False
+                html_output += '<ul>\n'
+                in_unordered_list = True
+                if in_paragraph:
+                    html_output += '</p>\n'
+                    in_paragraph = False
 
+            # Extract list item content and add to HTML output
+            item_content = line[2:]
+            html_output += f'    <li>{item_content}</li>\n'
 
-def clean_line(line):
-    """
-    Styling tags with the use of Regular expressions.
-    <b>...<\b><em>...<\em>
-    [[...]] = md5(...)
-    ((...)) = ... with no 'C' or 'c' characters.
-    """
-    # Replace ** for <b> tags
-    line = re.sub(r"\*\*(\S+)", r"<b>\1", line)
-    line = re.sub(r"(\S+)\*\*", r"\1</b>", line)
+        elif line.startswith('1. '):
+            # Start of an ordered list
+            if not in_ordered_list:
+                if in_unordered_list:
+                    html_output += '</ul>\n'
+                    in_unordered_list = False
+                html_output += '<ol>\n'
+                in_ordered_list = True
+                if in_paragraph:
+                    html_output += '</p>\n'
+                    in_paragraph = False
 
-    # Replace __ for <em> tags
-    line = re.sub(r"\_\_(\S+)", r"<em>\1", line)
-    line = re.sub(r"(\S+)\_\_", r"\1</em>", line)
+            # Extract list item content and add to HTML output
+            item_content = line[3:]
+            html_output += f'    <li>{item_content}</li>\n'
 
-    # Replace [[<content>]] for md5 hash of content.
-    line = re.sub(r"\[\[(.*)\]\]", md5(r"\1".encode()).hexdigest(), line)
+        elif line.strip():  # Non-empty line (considered as a paragraph)
+            if not in_paragraph:
+                if in_unordered_list:
+                    html_output += '</ul>\n'
+                    in_unordered_list = False
+                elif in_ordered_list:
+                    html_output += '</ol>\n'
+                    in_ordered_list = False
+                html_output += '<p>\n'
+                in_paragraph = True
 
-    # Replace ((<content>)) for no C characters on content.
-    result = re.search(r"(\(\((.*)\)\))", line)
-    if result is not None:
-        content = result.group(2)
-        content = re.sub("[cC]", "", content)
-        line = re.sub(r"\(\((.*)\)\)", content, line)
+            # Add content to the paragraph
+            html_output += f'    {line}\n'
 
-    return(line)
+        else:  # Empty line
+            if in_paragraph:
+                html_output += '</p>\n'
+                in_paragraph = False
 
+    # Check if any list or paragraph was left open
+    if in_unordered_list:
+        html_output += '</ul>\n'
+    elif in_ordered_list:
+        html_output += '</ol>\n'
+    elif in_paragraph:
+        html_output += '</p>\n'
 
-def mark2html(*argv):
-    """
-    Main method to parse and process markdown to html.
-    """
-    inputFile = argv[1]
-    ouputFile = argv[2]
-    flags = argv[3:]
-
-
-    with open(inputFile, "r") as f:
-        markdown = f.readlines()
-
-    html = []
-
-    # Iterate over lines of the read file.
-    index = 0
-    while index < len(markdown):
-        line = clean_line(markdown[index])
-
-        # If Heading.
-        if line[0] == "#":
-            html.append(h(line))
-
-        # If ordered or unordered list.
-        elif line[0] == "-" or line[0] == "*":
-            list_type = {"-": "ul", "*": "ol"}
-            current_index = index
-            ul_string = "<{}>\n".format(list_type[line[0]])
-            while (current_index < len(markdown) and
-                   markdown[current_index][0] in ["-", "*"]):
-                ul_string += li(markdown[current_index], flags)
-                current_index += 1
-            index = current_index - 1  # Because while ends one after.
-            ul_string += "</{}>\n".format(list_type[line[0]])
-            html.append(ul_string)
-
-        # If only a newline.
-        elif line[0] == "\n":
-            line = ""
-
-        # Else there are no special characters at beggining of line.
-        else:
-            paragraph = "<p>\n"
-            new_index = index
-
-            while new_index < len(markdown):
-                line = clean_line(markdown[new_index])
-                if ((new_index + 1) < len(markdown)
-                        and markdown[new_index + 1] is not None):
-                    next_line = markdown[new_index + 1]
-                else:
-                    next_line = "\n"
-                if "-s" in flags:
-                    line = "    " + line
-                paragraph += line.strip() + "\n"
-                if next_line[0] in ["*", "#", "-", "\n"]:
-                    index = new_index
-                    break
-
-                # If next line has no special characters.
-                if next_line[0] not in ["#", "-", "\n"]:
-                    if "-s" in flags:
-                        br = r"        <br />"
-                    else:
-                        br = r"<br/>"
-                    br += "\n"
-                    paragraph += br
-
-                new_index += 1
-
-            paragraph += "</p>\n"
-
-            html.append(paragraph)
-
-        index += 1
-
-    # Create html text string with corresponding newlines.
-    text = ""
-    for line in html:
-        if "\n" not in line:
-            line += "\n"
-        text += line
-
-    if "-v" in flags:
-        print(text)
-
-    # Write into <ouputFile> file.
-    with open(ouputFile, "w") as f:
-        f.write(text)
-
-    exit(0)
-
-
-def perror(*args, **kwargs):
-    """
-    Printing to STDERR file descriptor.
-    """
-    print(*args, file=stderr, **kwargs)
-
+    return html_output
 
 if __name__ == "__main__":
+    if len(sys.argv) < 3:
+        sys.stderr.write("Usage: ./markdown2html.py <input_file> <output_file>\n")
+        sys.exit(1)
+    
+    markdown_file = sys.argv[1]
+    output_file = sys.argv[2]
+    convert_markdown_to_html(markdown_file, output_file)
 
-    if len(argv) < 3:
-        perror("Usage: ./markdown2html.py README.md README.html")
-        # perror("Usage: ./markdown2html.py README.md README.html [-s]")
-        exit(1)
-
-    if exists(argv[1]) is False:
-        perror("Missing {}".format(argv[1]))
-        exit(1)
-
-    mark2html(*argv)
